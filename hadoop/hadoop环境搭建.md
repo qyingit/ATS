@@ -69,6 +69,41 @@ vi /etc/sudoers
 
 hadoop配置
 
+同步工具
+
+1 cd bin/   2 touch  xsync  3 vi xsync   4 chmod  777  xsync
+
+```c
+#!/bin/bash
+#1 获取输入参数个数，如果没有参数，直接退出
+pcount=$#
+if((pcount==0)); then
+echo no args;
+exit;
+fi
+
+#2 获取文件名称
+p1=$1
+fname=`basename $p1`
+echo fname=$fname
+
+#3 获取上级目录到绝对路径
+pdir=`cd -P $(dirname $p1); pwd`
+echo pdir=$pdir
+
+#4 获取当前用户名称
+user=`whoami`
+
+#5 循环同步
+for((host=1; host<4; host++)); do
+        echo --------------------- qying$host ----------------
+        rsync -rvl $pdir/$fname $user@qying$host:$pdir
+done
+
+```
+
+
+
 ```java
 安装hadoop
    	tar -zxvf hadoop-2.7.2.tar.gz -C /opt/module/
@@ -170,5 +205,97 @@ http://192.168.1.101:19888/jobhistory
 以上关闭需要将start变为stop
 ```
 
+默认配置文件位置：
 
+```java
+[core-default.xml]
+		hadoop-common-2.7.2.jar/ core-default.xml
+[hdfs-default.xml]
+		hadoop-hdfs-2.7.2.jar/ hdfs-default.xml
+[yarn-default.xml]
+		hadoop-yarn-common-2.7.2.jar/ yarn-default.xml
+[mapred-default.xml]
+		hadoop-mapreduce-client-core-2.7.2.jar/ mapred-default.xml
+
+```
+
+
+
+集群配置
+
+```
+hdfs-site.xml
+    <property>
+		<name>dfs.replication</name>
+		<value>3</value>
+	</property>
+
+	<property>
+        <name>dfs.namenode.secondary.http-address</name>
+        <value>hadoop104:50090</value>
+    </property>
+yarn-site.xml
+    <!-- reducer获取数据的方式 -->
+	<property>
+		 <name>yarn.nodemanager.aux-services</name>
+		 <value>mapreduce_shuffle</value>
+	</property>
+
+	<!-- 指定YARN的ResourceManager的地址 -->
+	<property>
+		<name>yarn.resourcemanager.hostname</name>
+		<value>hadoop103</value>
+	</property>
+mapred-site.xml
+    <!-- 指定mr运行在yarn上 -->
+	<property>
+		<name>mapreduce.framework.name</name>
+		<value>yarn</value>
+	</property>
+xsync /opt/module/hadoop-2.7.2/ 分发配置
+hadoop namenode -format
+配置slaves
+vi slaves
+    hadoop102
+    hadoop103
+    hadoop104
+启动方式
+start-dfs.sh
+start-yarn.sh 
+
+start-all.sh
+集群时间同步
+rpm -qa|grep ntp
+vi /etc/ntp.conf
+restrict 192.168.1.0 mask 255.255.255.0 nomodify notrap
+修改2（设置为不采用公共的服务器）
+server 0.centos.pool.ntp.org iburst
+server 1.centos.pool.ntp.org iburst
+server 2.centos.pool.ntp.org iburst
+server 3.centos.pool.ntp.org iburst为
+#server 0.centos.pool.ntp.org iburst
+#server 1.centos.pool.ntp.org iburst
+#server 2.centos.pool.ntp.org iburst
+#server 3.centos.pool.ntp.org iburst
+添加3（添加默认的一个内部时钟数据，使用它为局域网用户提供服务。）
+server 127.127.1.0
+fudge 127.127.1.0 stratum 10
+）修改/etc/sysconfig/ntpd 文件
+vim /etc/sysconfig/ntpd
+增加内容如下（让硬件时间与系统时间一起同步）
+SYNC_HWCLOCK=yes
+service ntpd status
+service ntpd start
+chkconfig ntpd on
+crontab -e
+*/10 * * * * /usr/sbin/ntpdate hadoop102
+```
+
+SSH无秘登陆
+
+```
+cd ~
+ssh-keygen -t rsa 
+ssh-copy-id hadoop102
+```
 
