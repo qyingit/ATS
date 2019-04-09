@@ -1,0 +1,74 @@
+# hadoop总结
+
+#### 出现原因
+
+解决海量数据存储与分析计算的问题
+
+#### 特点
+
+高速,数据结构多样化,低价值密度
+
+#### 应用场景
+
+1. 给商家提供精细化运营,提升销量,节约成本
+2. 分析用户消费习惯,为用户购买商品提供方便
+3. 构建城市大脑,提高公共服务能力
+4. 为用户提供决策支撑能力
+
+#### 大数据部门组织架构:
+
+1. 平台组
+
+   hadoop,flume,kafka,strom,spark等框架平台搭建
+
+   集群性能监控
+
+   集群平台性能优化
+
+2. 数据仓库组
+
+   ETL数据清洗
+
+   hive工程师-数据分析,数据建模
+
+3. 数据挖掘组
+
+   算法工程师
+
+   推荐系统工程师
+
+   用户画像工程师
+
+#### Hadoop是什么
+
+一个分布式的基础架构
+
+#### hadoop组成：
+
+1. HDFS：高可靠,高吞吐的文件系统
+2. YARN：作业调度与集群资源管理框架
+3. Mapreduce：分布式离线并行计算框架
+4. Common支持其它模块Configuration,Rpc,序列化机制,日志操作
+
+#### 架构概述
+
+##### HDFS
+
+1. Namenode存储文件的元数据,文件名，目录等信息
+
+
+2. Datanode存储文件的具体数据与校验和
+3. Secondary Namenode HDFS的备份，每段时间获取HDFS数据快照
+
+##### yarn
+
+1. ResourceManager 监控资源用于调度ApplicationMaster
+2. NodeManager 处理resourceManager命令
+3. ApplicationMaster 数据切分，为应用程序申请资源，分配任务
+4. Container 对任务运行环境抽象，封装了CPU环境变量，启动命令等信息
+
+##### mapreduce
+
+1. Map阶段并行处理数据
+2. Reduce阶段对Map结果汇总
+
