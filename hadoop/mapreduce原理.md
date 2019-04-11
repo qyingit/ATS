@@ -195,7 +195,186 @@ job.setGroupingComparatorClass(OrderGroupingComparator.class);
 
 ###ReduceTask工作机制
 
+```java
+运行流程：
+    1.copy阶段：reducetask从maptask拷贝一片数据，如果某一片数据大小超过阈值，就写道磁盘中，否则到内存中
+    2.merge阶段：在远程拷贝数据的同时，reducetask启动了两个后台线程对内存和磁盘文件合并，防止文件过多
+    3.sort阶段：根据mapredeuce语义,用户编写reduce()函数输入数据按key进行聚集。为了将key相同的数据聚在一起，hadoop采用基于排序的策略，由于各个maptask已经实现对自己处理结果进行了局部排序，只需要在进行一次归并排序
+    4.Reduce阶段：reduce()将计算结果写道hdfs上
+
+注意事项：
+1.设置reduce task并行度
+    reducetask的并行度影响job的执行并发度与执行效率，但maptask的并发数与切片数决定不同,reducetask的数量可以手动设置
+    job.setNumReduceTasks(4);
+2.注意：
+    reducetask=0，表示没有reduce阶段，输出文件个数和map个数一致
+    reducetask默认值就是1，所以输出文件个数为一个
+    如果数据分布不均匀，就有可能在reduce阶段产生数据倾斜
+    reducetask数量并不是任意设置，还要考虑业务逻辑需求，有些情况下，需要计算全局汇总结果，就只能有1个reducetask
+    具体多少个reducetask，需要根据集群性能而定
+    如果分区数不是1，但是reducetask为1，是否执行分区过程。答案是：不执行分区过程。因为在maptask的源码中，执行分区的前提是先判断reduceNum个数是否大于1。不大于1肯定不执行
 ```
 
+###OutputFormat接口实现类
+
+```java
+几种常见的OutputFormat实现类
+1.TextOutputFormat文本输出
+    默认的输出格式是TextOutputFormat，它把每条记录写为文本行。它的键和值可以是任意类型，因为TextOutputFormat调用toString()方法把它们转换为字符串。
+2.SequenceFileOutputFormat
+    SequenceFileOutputFormat将它的输出写为一个顺序文件。如果输出需要作为后续 MapReduce任务的输入，这便是一种好的输出格式，因为它的格式紧凑，很容易被压缩
+3.自定义OutputFormat
+    根据用户需求，自定义实现输出
+    demo:
+        1.自定义一个类继承FileOutputFormat。
+        2.改写recordwriter，具体改写输出数据的方法write()。
+```
+
+### JOIN应用
+
+```java
+reducejoin：
+    1.map端：为不同表的key与value打标签，区分不同的来源记录，用连接字段作为key，其余部分和新加的标志作为value输出
+    2.reduce端: 在reduce端以连接字段作为key，只需要在分组中将那些来源不同的文件记录分开,最后合并就ok了
+    缺点:造成map和reduce端也就是shuffle阶段出现大量的数据传输，效率很低。
+mapjoin:
+    具体方法:
+        1.在mapper的setup阶段,将文件读取到缓存集合中
+        2.在驱动函数中加载缓存
+        job.addCacheFile(new URI("file:/e:/
+ mapjoincache/pd.txt"));// 缓存普通文件到task运行节点
+        DistributedCacheDriver缓存文件
+        mapper读取文件的数据
+        setup()方法中
+           1.获取缓存的文件
+           2.循环读取缓存文件一行
+           3.切割
+           4.缓存数据到集合
+           5.关流
+        map()方法中
+           1.获取一行
+           2.截取
+           3.获取订单id
+           4.获取商品名称
+           5.拼接
+           6.写出
+    解决方案:在map端缓存多张表,提前处理业务逻辑，增加map端业务，减少reduce端数据的压力，尽力减少数据倾斜
+    场景:一张表十分小，一张表十分大
+```
+
+### 计数器应用
+
+```java
+Hadoop为每个作业维护若干内置计数器，以描述多项指标。例如，某些计数器记录已处理的字节数和记录数，使用户可监控已处理的输入数据量和已产生的输出数据量
+API
+(1）采用枚举的方式统计计数
+enum MyCounter{MALFORORMED,NORMAL}
+//对枚举定义的自定义计数器加1
+context.getCounter(MyCounter.MALFORORMED).increment(1);
+(2）采用计数器组、计数器名称的方式统计context.getCounter("counterGroup","countera").increment(1);组名和计数器名称随便起，但最好有意义。
+(3）计数结果在程序运行后的控制台上查看。
+
+```
+
+###数据清洗（ETL）
+
+```java
+在运行核心业务Mapreduce程序之前，往往要先对数据进行清洗，清理掉不符合用户要求的数据。清理的过程往往只需要运行mapper程序，不需要运行reduce程序
+```
+
+
+
+## MapReduce开发总结
+
+```java
+在编写mapreduce程序时，需要考虑的几个方面
+1:输入数据接口：InputFormat
+   默认使用的实现类是：TextInputFormat 
+   TextInputFormat的功能逻辑是：一次读一行文本，然后将该行的起始偏移量作为key，行内容作为value返回。
+KeyValueTextInputFormat每一行均为一条记录，被分隔符分割为key，value。默认分隔符是tab（\t）。
+NlineInputFormat按照指定的行数N来划分切片。
+CombineTextInputFormat可以把多个小文件合并成一个切片处理，提高处理效率。
+用户还可以自定义InputFormat。
+2:逻辑处理接口：Mapper  
+   用户根据业务需求实现其中三个方法：map()   setup()   cleanup () 
+3.Partitioner分区
+	有默认实现 HashPartitioner，逻辑是根据key的哈希值和numReduces来返回一个分区号；key.hashCode()&Integer.MAXVALUE % numReduces
+	如果业务上有特别的需求，可以自定义分区。
+4.Comparable排序
+	当我们用自定义的对象作为key来输出时，就必须要实现WritableComparable接口，重写其中的compareTo()方法。
+	部分排序：对最终输出的每一个文件进行内部排序。
+	全排序：对所有数据进行排序，通常只有一个Reduce。
+	二次排序：排序的条件有两个。
+5.Combiner合并
+Combiner合并可以提高程序执行效率，减少io传输。但是使用时必须不能影响原有的业务处理结果
+6.reduce端分组：Groupingcomparator
+	reduceTask拿到输入数据（一个partition的所有数据）后，首先需要对数据进行分组，其分组的默认原则是key相同，然后对每一组kv数据调用一次reduce()方法，并且将这一组kv中的第一个kv的key作为参数传给reduce的key，将这一组数据的value的迭代器传给reduce()的values参数。
+	利用上述这个机制，我们可以实现一个高效的分组取最大值的逻辑。
+	自定义一个bean对象用来封装我们的数据，然后改写其compareTo方法产生倒序排序的效果。然后自定义一个Groupingcomparator，将bean对象的分组逻辑改成按照我们的业务分组id来分组（比如订单号）。这样，我们要取的最大值就是reduce()方法中传进来key。
+7.逻辑处理接口：Reducer
+	用户根据业务需求实现其中三个方法：reduce()   setup()   cleanup () 
+8.输出数据接口：OutputFormat
+	默认实现类是TextOutputFormat，功能逻辑是：将每一个KV对向目标文本文件中输出为一行。
+ SequenceFileOutputFormat将它的输出写为一个顺序文件。如果输出需要作为后续 MapReduce任务的输入，这便是一种好的输出格式，因为它的格式紧凑，很容易被压缩。
+用户还可以自定义OutputFormat。
+
+```
+
+## Hadoop数据压缩
+
+```java
+如果磁盘I/O和网络带宽影响了MapReduce作业性能，在任意MapReduce阶段启用压缩都可以改善端到端处理时间并减少I/O和网络流量
+压缩Mapreduce的一种优化策略：通过压缩编码对Mapper或者Reducer的输出进行压缩，以减少磁盘IO，提高MR程序运行速度（但相应增加了cpu运算负担）
+注意：压缩特性运用得当能提高性能，但运用不当也可能降低性能。
+基本原则：
+（1）运算密集型的job，少用压缩
+（2）IO密集型的job，多用压缩
+
+压缩方式:
+1. Gzip压缩
+优点：压缩率比较高，而且压缩/解压速度也比较快；hadoop本身支持，在应用中处理gzip格式的文件就和直接处理文本一样；大部分linux系统都自带gzip命令，使用方便。
+缺点：不支持split。
+应用场景：当每个文件压缩之后在130M以内的（1个块大小内），都可以考虑用gzip压缩格式。例如说一天或者一个小时的日志压缩成一个gzip文件，运行mapreduce程序的时候通过多个gzip文件达到并发。hive程序，streaming程序，和java写的mapreduce程序完全和文本处理一样，压缩之后原来的程序不需要做任何修改。
+2.Bzip2压缩
+优点：支持split；具有很高的压缩率，比gzip压缩率都高；hadoop本身支持，但不支持native；在linux系统下自带bzip2命令，使用方便。
+缺点：压缩/解压速度慢；不支持native。
+应用场景：适合对速度要求不高，但需要较高的压缩率的时候，可以作为mapreduce作业的输出格式；或者输出之后的数据比较大，处理之后的数据需要压缩存档减少磁盘空间并且以后数据用得比较少的情况；或者对单个很大的文本文件想压缩减少存储空间，同时又需要支持split，而且兼容之前的应用程序（即应用程序不需要修改）的情况。
+3.Lzo压缩
+优点：压缩/解压速度也比较快，合理的压缩率；支持split，是hadoop中最流行的压缩格式；可以在linux系统下安装lzop命令，使用方便。
+缺点：压缩率比gzip要低一些；hadoop本身不支持，需要安装；在应用中对lzo格式的文件需要做一些特殊处理（为了支持split需要建索引，还需要指定inputformat为lzo格式）。
+应用场景：一个很大的文本文件，压缩之后还大于200M以上的可以考虑，而且单个文件越大，lzo优点越越明显。
+4. Snappy压缩
+优点：高速压缩速度和合理的压缩率。
+缺点：不支持split；压缩率比gzip要低；hadoop本身不支持，需要安装；
+应用场景：当Mapreduce作业的Map输出的数据比较大的时候，作为Map到Reduce的中间数据的压缩格式；或者作为一个Mapreduce作业的输出和另外一个Mapreduce作业的输入。
+
+
+压缩位置选择:
+1.输入端采用压缩
+在有大量数据并计划重复处理的情况下，应该考虑对输入进行压缩。然而，你无须显示指定使用的编解码方式。Hadoop自动检查文件扩展名，如果扩展名能够匹配，就会用恰当的编解码方式对文件进行压缩和解压。否则，Hadoop就不会使用任何编解码器。
+2.mapper输出采用压缩
+当map任务输出的中间数据量很大时，应考虑在此阶段采用压缩技术。这能显著改善内部数据Shuffle过程，而Shuffle过程在Hadoop处理过程中是资源消耗最多的环节。如果发现数据量大造成网络传输缓慢，应该考虑使用压缩技术。可用于压缩mapper输出的快速编解码器包括LZO或者Snappy。
+注：LZO是供Hadoop压缩数据用的通用压缩编解码器。其设计目标是达到与硬盘读取速度相当的压缩速度，因此速度是优先考虑的因素，而不是压缩率。与gzip编解码器相比，它的压缩速度是gzip的5倍，而解压速度是gzip的2倍。同一个文件用LZO压缩后比用gzip压缩后大50%，但比压缩前小25%~50%。这对改善性能非常有利，map阶段完成时间快4倍。
+3.reducer输出采用压缩
+在此阶段启用压缩技术能够减少要存储的数据量，因此降低所需的磁盘空间。当mapreduce作业形成作业链条时，因为第二个作业的输入也已压缩，所以启用压缩同样有效
+
+
+
+压缩参数配置:
+io.compression.codecs   
+（在core-site.xml中配置）	org.apache.hadoop.io.compress.DefaultCodec, org.apache.hadoop.io.compress.GzipCodec, org.apache.hadoop.io.compress.BZip2Codec
+	输入压缩	Hadoop使用文件扩展名判断是否支持某种编解码器
+mapreduce.map.output.compress（在mapred-site.xml中配置）	false	mapper输出	这个参数设为true启用压缩
+mapreduce.map.output.compress.codec（在mapred-site.xml中配置）	org.apache.hadoop.io.compress.DefaultCodec	mapper输出	使用LZO或snappy编解码器在此阶段压缩数据
+mapreduce.output.fileoutputformat.compress（在mapred-site.xml中配置）	false	reducer输出	这个参数设为true启用压缩
+mapreduce.output.fileoutputformat.compress.codec（在mapred-site.xml中配置）	org.apache.hadoop.io.compress. DefaultCodec	reducer输出	使用标准工具或者编解码器，如gzip和bzip2
+mapreduce.output.fileoutputformat.compress.type（在mapred-site.xml中配置）	RECORD	reducer输出	SequenceFile输出使用的压缩类型：NONE和BLOCK
+
+
+数据流的压缩和解压缩
+ CompressionCodec有两个方法可以用于轻松地压缩或解压缩数据。要想对正在被写入一个输出流的数据进行压缩，我们可以使用createOutputStream(OutputStreamout)方法创建一个CompressionOutputStream，将其以压缩格式写入底层的流。相反，要想对从输入流读取而来的数据进行解压缩，则调用createInputStream(InputStreamin)函数，从而获得一个CompressionInputStream，从而从底层的流读取未压缩的数据。
+ 
+  Map输出端采用压缩
+  即使你的MapReduce的输入输出文件都是未压缩的文件，你仍然可以对map任务的中间结果输出做压缩，因为它要写在硬盘并且通过网络传输到reduce节点，对其压缩可以提高很多性能，这些工作只要设置两个属性即可，我们来看下代码怎么设置：
 ```
 
